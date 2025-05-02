@@ -1,3 +1,6 @@
 .env
 img_text_functions/
 __pycache__/
+train_images/
+rl_images/
+eval_images/

@@ -17,6 +17,7 @@ def create_text_image(
         add_outline=False,
         outline_width=1,
         outline_color=(0, 0, 0),
+        outline_opacity=1.0,
         shadow_offset=(2, 2),
         shadow_color=(100, 100, 100),
         shadow_blur=2,
@@ -56,6 +57,7 @@ def create_text_image(
         add_outline (bool): Whether to add an outline to the text
         outline_width (int): Width of the text outline
         outline_color (tuple): Color of the text outline in RGB
+        outline_opacity (float): Opacity of the text outline (0-1)
         shadow_offset (tuple): Offset of the shadow (x, y)
         shadow_color (tuple): Color of the shadow in RGB
         shadow_blur (int): Blur radius for the shadow
@@ -87,7 +89,7 @@ def create_text_image(
         style_probabilities = {
             'normal': 0.92,
             'bold': 0.02,
-            'strikethrough': 0.01,
+            'strikethrough': 0,
             'uppercase': 0.03,
             'italic': 0.02
         }
@@ -235,12 +237,16 @@ def create_text_image(
     # Add gradient background if requested
     if add_gradient:
         gradient_img = create_gradient(img_width, img_height, gradient_start_color, gradient_end_color, gradient_direction)
-        img = Image.blend(img, gradient_img, 1.0)
+        # Use a moderate blend factor that preserves readability while still showing the gradient
+        img = Image.blend(img, gradient_img, 0.7)
     
     # Add texture to background if requested
     if add_texture:
         texture = create_texture(img_width, img_height, texture_intensity)
-        img = Image.blend(img, texture, texture_intensity)
+        # Use the actual texture_intensity directly but scale it for readability
+        # This ensures the intensity parameter is meaningful while still keeping text readable
+        blend_factor = texture_intensity * 0.7  # Scale down slightly for readability
+        img = Image.blend(img, texture, blend_factor)
     
     draw = ImageDraw.Draw(img)
     
@@ -272,10 +278,34 @@ def create_text_image(
             
             # Draw outline if requested
             if add_outline:
-                for offset_x in range(-outline_width, outline_width + 1):
-                    for offset_y in range(-outline_width, outline_width + 1):
-                        draw.text((current_x + offset_x, y_pos + offset_y), 
-                                 word, fill=outline_color, font=font)
+                # Draw outline using a more selective approach to avoid overwhelming the text
+                # Just draw at the major compass points and diagonals for a cleaner look
+                outline_positions = [
+                    (-outline_width, 0), (outline_width, 0),  # Left and right
+                    (0, -outline_width), (0, outline_width),  # Top and bottom
+                ]
+                
+                # Add diagonal positions only for wider outlines
+                if outline_width > 1:
+                    outline_positions.extend([
+                        (-outline_width, -outline_width), (outline_width, outline_width),  # Diagonals
+                        (-outline_width, outline_width), (outline_width, -outline_width)
+                    ])
+                
+                # Adjust outline color based on opacity (blend with background color)
+                if outline_opacity < 1.0:
+                    adjusted_outline_color = (
+                        int(outline_color[0] * outline_opacity + bg_color[0] * (1 - outline_opacity)),
+                        int(outline_color[1] * outline_opacity + bg_color[1] * (1 - outline_opacity)),
+                        int(outline_color[2] * outline_opacity + bg_color[2] * (1 - outline_opacity))
+                    )
+                else:
+                    adjusted_outline_color = outline_color
+                
+                # Draw the outline
+                for offset_x, offset_y in outline_positions:
+                    draw.text((current_x + offset_x, y_pos + offset_y), 
+                            word, fill=adjusted_outline_color, font=font)
             
             # Draw shadow if requested
             if add_shadow:
@@ -366,12 +396,19 @@ def create_texture(width, height, intensity):
     noise = np.random.randint(0, 255, (height, width), dtype=np.uint8)
     noise_img = Image.fromarray(noise)
     
-    # Apply Gaussian blur to smooth the noise
-    noise_img = noise_img.filter(ImageFilter.GaussianBlur(radius=2))
+    # Apply Gaussian blur to smooth the noise - intensity affects blur amount
+    # Less intense = more blur (smoother texture)
+    blur_radius = max(1, int(3 * (1 - intensity)))
+    noise_img = noise_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
     
-    # Adjust contrast to make texture more visible
+    # Adjust contrast based on intensity
+    # Higher intensity = higher contrast
+    contrast_factor = 1.0 + intensity  # ranges from 1.0 to 2.0
     enhancer = ImageEnhance.Contrast(noise_img)
-    noise_img = enhancer.enhance(1.5)
+    noise_img = enhancer.enhance(contrast_factor)
+    
+    # Convert to RGB mode to match the main image
+    noise_img = noise_img.convert('RGB')
     
     return noise_img
 
