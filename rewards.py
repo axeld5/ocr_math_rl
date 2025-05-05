@@ -42,7 +42,9 @@ def compute_train_rewards(prompts, completions, ocr_ground_truth=None, answer_gr
     scores = []
     for response in extracted_responses:
         score = 0
-        score += has_think_tags(response)
+        if not has_think_tags(response):
+            score = -1
+            continue
         if ocr_ground_truth and has_ocr_tags(response):
             score += reward_ocr_accuracy(ocr_ground_truth, response)
         if answer_ground_truth and has_final_answer_tags(response):
