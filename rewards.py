@@ -1,46 +1,38 @@
-import pyphen
-from sentence_transformers import SentenceTransformer, util
+import re
+import difflib
 
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+def has_ocr_tags(text):
+    """Check if text contains <ocr> </ocr> tags"""
+    return 1 if re.search(r'<ocr>.*?</ocr>', text, re.DOTALL) is not None else 0
 
-def count_syllables(text, dic):
-    words = text.strip().split()
-    syllable_count = 0
-    for word in words:
-        hyphenated = dic.inserted(word)
-        syllable_count += hyphenated.count('-') + 1
-    return syllable_count
+def has_think_tags(text):
+    """Check if text contains <think> </think> tags"""
+    return 1 if re.search(r'<think>.*?</think>', text, re.DOTALL) is not None else 0
+
+def has_final_answer_tags(text):
+    """Check if text contains <final_answer> </final_answer> tags"""
+    return 1 if re.search(r'<final_answer>.*?</final_answer>', text, re.DOTALL) is not None else 0
+
+def reward_ocr_accuracy(ocr_ground_truth, answer_ocr):
+    """Compare OCR ground truth with model's OCR output"""
+    if not ocr_ground_truth or not answer_ocr:
+        return 0
+    
+    # Extract OCR text if it's in tags
+    if '<ocr>' in answer_ocr and '</ocr>' in answer_ocr:
+        answer_ocr = re.search(r'<ocr>(.*?)</ocr>', answer_ocr, re.DOTALL).group(1).strip()
+    
+    # Calculate similarity using difflib
+    matcher = difflib.SequenceMatcher(None, ocr_ground_truth, answer_ocr)
+    similarity = matcher.ratio()
+    return similarity
+
+def reward_exact_match(ground_truth, model_answer):
+    """Check if ground truth exactly matches model answer"""
+    return 1 if ground_truth.strip() == model_answer.strip() else 0
 
 
-
-def is_haiku(text):
-    dic = pyphen.Pyphen(lang='en')
-    lines = [line.strip() for line in text.strip().split('\n') if line.strip()]
-    if len(lines) != 3:
-        return False, "Not exactly 3 lines"
-    expected_syllables = [5, 7, 5]
-    actual_syllables = [count_syllables(line, dic) for line in lines]
-    if actual_syllables == expected_syllables:
-        return True, "Valid haiku"
-    else:
-        return False, f"Syllable pattern mismatch: {actual_syllables} (expected [5, 7, 5])"
-
-def reward_three_lines(text):
-    lines = [line.strip() for line in text.strip().split('\n') if line.strip()]
-    if len(lines) != 3:
-        return -1
-    return 0
-
-def reward_haiku(text:str) -> int:
-    return int(is_haiku(text)[0])
-
-def reward_similarity(summary:str, haiku:str):
-    embedding_1 = model.encode(haiku, convert_to_tensor=True)
-    embedding_2 = model.encode(summary, convert_to_tensor=True)
-    value = util.pytorch_cos_sim(embedding_1, embedding_2)
-    return value - 0.5
-
-def compute_train_rewards_sparse(prompts, completions, **kwargs):
+def compute_train_rewards(prompts, completions, ocr_ground_truth=None, answer_ground_truth=None, **kwargs):
     assignment = prompts[0][0]["content"].split(":")[1].strip()
     responses = [completion[0]["content"] for completion in completions]
     extracted_responses = [
@@ -49,24 +41,14 @@ def compute_train_rewards_sparse(prompts, completions, **kwargs):
     ]
     scores = []
     for response in extracted_responses:
-        score = reward_three_lines(response) + reward_haiku(response)
-        if score == 1:
-            score += reward_similarity(assignment, response)
+        score = 0
+        score += has_think_tags(response)
+        if ocr_ground_truth and has_ocr_tags(response):
+            score += reward_ocr_accuracy(ocr_ground_truth, response)
+        if answer_ground_truth and has_final_answer_tags(response):
+            final_answer = re.search(r'<final_answer>(.*?)</final_answer>', response, re.DOTALL)
+            if final_answer:
+                final_answer = final_answer.group(1).strip()
+                score += reward_exact_match(answer_ground_truth, final_answer)
         scores.append(score)
-        continue
-    return scores
-
-def compute_train_rewards(prompts, completions, **kwargs):
-    assignment = prompts[0][0]["content"].split(":")[1].strip()
-    responses = [completion[0]["content"] for completion in completions]
-    extracted_responses = [
-        r.strip()
-        for r in responses
-    ]
-    scores = []
-    for response in extracted_responses:
-        score = reward_three_lines(response) + reward_haiku(response)
-        score += reward_similarity(assignment, response)
-        scores.append(score)
-        continue
     return scores

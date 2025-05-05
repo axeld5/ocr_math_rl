@@ -3,7 +3,6 @@ import json
 from PIL import Image
 from datasets import Dataset
 from transformers import AutoProcessor, AutoModelForImageTextToText, TrainingArguments, Trainer, BitsAndBytesConfig
-from peft import get_peft_model, LoraConfig
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,8 +10,6 @@ model_id = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
 
 device = "cuda"
 model = AutoModelForImageTextToText.from_pretrained(model_id, device_map="auto", torch_dtype=torch.bfloat16, attn_implementation="eager").to(device) #quantization_config=bnb_config)
-#model = get_peft_model(model, lora_config)
-#model.print_trainable_parameters()
 processor = AutoProcessor.from_pretrained(model_id)
 image_token_id = processor.tokenizer.additional_special_tokens_ids[
             processor.tokenizer.additional_special_tokens.index("<image>")]
@@ -21,18 +18,17 @@ def collate_fn(examples):
     texts = []
     images = []
     for example in examples:
-        image = example["image"]
+        image = Image.open(example["image_path"])
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        question = example["question"]
-        answer = example["multiple_choice_answer"]
+        question = "Answer the question from the image."
+        answer = example["model_response"]
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Answer briefly."},
+                    {"type": "text", "text": question},
                     {"type": "image"},
-                    {"type": "text", "text": question}
                 ]
             },
             {
@@ -76,13 +72,13 @@ args = TrainingArguments(
     save_steps=1000,
     push_to_hub=True,
     save_total_limit=1,
-    output_dir="paligemma2_thinking_v2",
+    output_dir="smolvlm2_ocr_thinking",
     bf16=True,
     report_to=["tensorboard"],
     dataloader_pin_memory=False
 )
 
-train_ds = Dataset.from_dict(json.load(open("training_data/truncated_training_dict_v2.json")))
+train_ds = Dataset.from_dict(json.load(open("train_set/train_info.json")))
 
 trainer = Trainer(
     model=model,
@@ -92,4 +88,3 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.push_to_hub()
